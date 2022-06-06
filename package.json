@@ -17,6 +17,7 @@
         "v1migrate": "node dist/V1MigrationTool.js -i",
         "install-win-service": "winser -i -a",
         "uninstall-win-service": "winser -r -x",
+        "drop-check": "node dist/DropCheck.js -i",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "repository": {
@@ -34,6 +35,7 @@
         "aribts": "2.1.12",
         "axios": "0.24.0",
         "body-parser": "1.19.0",
+        "cli-progress": "3.11.1",
         "cors": "2.8.5",
         "diskusage-ng": "1.0.2",
         "express": "4.17.1",
@@ -59,6 +61,7 @@
     },
     "devDependencies": {
         "@types/body-parser": "1.19.1",
+        "@types/cli-progress": "3.11.0",
         "@types/express": "4.17.13",
         "@types/file-type": "10.9.1",
         "@types/js-yaml": "4.0.4",

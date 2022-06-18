@@ -17,7 +17,7 @@
         "v1migrate": "node dist/V1MigrationTool.js -i",
         "install-win-service": "winser -i -a",
         "uninstall-win-service": "winser -r -x",
-        "drop-check": "node dist/DropCheck.js -i",
+        "drop-check": "node dist/DropCheck.js",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "repository": {

@@ -1,7 +1,6 @@
 import * as aribts from 'aribts';
 import * as fs from 'fs';
 import * as path from 'path';
-import minimist from 'minimist';
 import 'reflect-metadata';
 import { install } from 'source-map-support';
 import DropCheckerModel from './model/operator/recording/DropCheckerModel';
@@ -19,27 +18,13 @@ class DropCheck {
     private dstLogDirPath: string;
 
     constructor() {
-        // 引数チェック
-        const args = minimist(process.argv.slice(2), {
-            alias: {
-                i: 'input',
-                o: 'output',
-            },
-            string: ['input', 'output'],
-        });
-
-        if (
-            typeof args.input === 'undefined' ||
-            args.input === ''
-        ) {
-            console.error('入力ファイルが指定されていません');
-            console.error('使用方法: npm run dropcheck INPUT.m2ts');
-            console.error('       or npm run dropcheck -- INPUT.m2ts -- -o LOG_OUT_DIR');
+        if (process.argv.length < 3) {
+            console.error('使用方法: npm run dropcheck INPUT.m2ts [OUTPUT_DIR]');
             process.exit(1);
         }
 
-        this.srcM2tsPath = args.input;
-        this.dstLogDirPath = args.output;
+        this.srcM2tsPath = process.argv[2];
+        this.dstLogDirPath = process.argv[3];
     }
 
     /**

@@ -10,6 +10,7 @@ import container from './model/ModelContainer';
 import cliProgress from 'cli-progress';
 import stream from 'stream';
 import * as containerSetter from './model/ModelContainerSetter';
+import https from 'https';
 install();
 
 containerSetter.set(container);
@@ -17,6 +18,7 @@ containerSetter.set(container);
 class DropCheck {
     private srcM2tsPath: string;
     private dstLogDirPath: string;
+    private isPostToSlack: boolean;
 
     constructor() {
         // 引数チェック
@@ -26,6 +28,7 @@ class DropCheck {
                 o: 'output',
             },
             string: ['input', 'output'],
+            boolean: ['slack'],
         });
 
         if (
@@ -40,6 +43,7 @@ class DropCheck {
 
         this.srcM2tsPath = args.input;
         this.dstLogDirPath = args.output;
+        this.isPostToSlack = args.slack;
     }
 
     /**
@@ -80,7 +84,7 @@ class DropCheck {
             console.error('ドロップチェックに失敗しました');
             console.error(err);
 
-            await checker.stop().catch(() => {});
+            await checker.stop().catch(() => { });
             transformStream.end();
             transformStream.unpipe();
             readableStream.close();
@@ -100,11 +104,14 @@ class DropCheck {
 
             console.log('ドロップチェック完了');
             this._printDropResult(dropResult);
+            if (this.isPostToSlack) {
+                this._postToSlack(dropResult);
+            }
         } catch (err: any) {
             console.error('解放処理またはドロップ情報の読み込みに失敗しました');
             console.error(err);
 
-            await checker.stop().catch(() => {});
+            await checker.stop().catch(() => { });
             transformStream.end();
             transformStream.unpipe();
             readableStream.close();
@@ -161,6 +168,66 @@ class DropCheck {
         console.log('error      : ' + error);
         console.log('drop       : ' + drop);
         console.log('scrambling : ' + scrambling);
+    }
+
+    /**
+     * post result to Slack
+     */
+    private _postToSlack(dropResult: aribts.Result) {
+        // TODO: move to yml
+        const SLACK_WEBHOOK_URL = 'WEB_HOOK_URL_HERE';
+
+        let error = 0;
+        let drop = 0;
+        let scrambling = 0;
+
+        for (const pid in dropResult) {
+            error += dropResult[pid].error;
+            drop += dropResult[pid].drop;
+            scrambling += dropResult[pid].scrambling;
+        }
+
+        const { srcM2tsPath } = this;
+        const hasProblem = error | drop | scrambling;
+
+        const texts = hasProblem ? ['<!here>'] : [];
+
+        const resultHead = hasProblem ? ':warning: ' : ':white_check_mark: ';
+        const resultMrkdwn = [
+            error === 0 ? 'E:0' : `*E:${error}*`,
+            drop === 0 ? 'D:0' : `*D:${drop}*`,
+            scrambling === 0 ? 'S:0' : `*S:${scrambling}*`,
+        ].join(' ');
+
+        texts.push(resultHead + resultMrkdwn);
+        texts.push(`>${srcM2tsPath}`);
+
+        const textHead = hasProblem ? '[!] ' : '';
+        const payload = {
+            text: textHead + srcM2tsPath,
+            blocks: texts.map((text) => ({
+                type: 'section',
+                text: {
+                    type: 'mrkdwn',
+                    text,
+                },
+            })),
+        };
+
+        const requestOptions = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+        };
+
+        const request = https.request(SLACK_WEBHOOK_URL, requestOptions);
+        // request.on('response', (response) => {
+        //   console.log(response.statusCode)
+        // })
+
+        request.write(JSON.stringify(payload));
+        request.end();
     }
 }
 

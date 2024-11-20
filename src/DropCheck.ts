@@ -54,13 +54,11 @@ class DropCheck {
 
             // v2.6.20 現在の実装では m2ts のパスはログファイルの名前の決定のみに使用される
             // データは stream から読み取られる
-            checker.start(
-                this.dstLogDirPath || path.dirname(this.srcM2tsPath),
-                this.srcM2tsPath,
-                transformStream,
-            ).catch((err: any) => {
-                reject(err);
-            });
+            checker
+                .start(this.dstLogDirPath || path.dirname(this.srcM2tsPath), this.srcM2tsPath, transformStream)
+                .catch((err: any) => {
+                    reject(err);
+                });
         }).catch(async (err: any) => {
             console.error('ドロップチェックに失敗しました');
             console.error(err);
@@ -71,7 +69,6 @@ class DropCheck {
             readableStream.close();
             process.exit(1);
         });
-
 
         try {
             // 結果が書き出されるまで待つ

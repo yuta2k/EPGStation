@@ -4,6 +4,7 @@ export type ChannelId = number;
 export type ServiceId = number;
 export type NetworkId = number;
 export type ProgramId = number;
+export type EventId = number;
 export type RuleId = number;
 export type ReserveId = number;
 export type RecordedId = number;
@@ -37,6 +38,7 @@ export interface ChannelItem {
     hasLogoData: boolean;
     channelType: ChannelType;
     channel: string;
+    type?: number;
 }
 
 /**
@@ -561,6 +563,7 @@ export interface ScheduleChannleItem {
     remoteControlKeyId?: number;
     hasLogoData: boolean;
     channelType: ChannelType;
+    type?: number;
 }
 
 /**

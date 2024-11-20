@@ -3,6 +3,7 @@ import { inject, injectable } from 'inversify';
 import * as path from 'path';
 import * as apid from '../../../../api';
 import Reserve from '../../../db/entities/Reserve';
+import Recorded from '../../../db/entities/Recorded';
 import DateUtil from '../../../util/DateUtil';
 import FileUtil from '../../../util/FileUtil';
 import StrUtil from '../../../util/StrUtil';
@@ -12,14 +13,16 @@ import IProgramDB from '../../db/IProgramDB';
 import IVideoFileDB from '../../db/IVideoFileDB';
 import IConfigFile, { RecordedDirInfo } from '../../IConfigFile';
 import IConfiguration from '../../IConfiguration';
+import IExecutionManagementModel from '../../IExecutionManagementModel';
 import ILogger from '../../ILogger';
 import ILoggerModel from '../../ILoggerModel';
 import IRecordingUtilModel, { RecFilePathInfo } from './IRecordingUtilModel';
 
 @injectable()
-export default class RecordingUtilModel implements IRecordingUtilModel {
+class RecordingUtilModel implements IRecordingUtilModel {
     private log: ILogger;
     private config: IConfigFile;
+    private executeManagementModel: IExecutionManagementModel;
     private channelDB: IChannelDB;
     private programDB: IProgramDB;
     private videoFileDB: IVideoFileDB;
@@ -28,6 +31,7 @@ export default class RecordingUtilModel implements IRecordingUtilModel {
     constructor(
         @inject('ILoggerModel') logger: ILoggerModel,
         @inject('IConfiguration') configuration: IConfiguration,
+        @inject('IExecutionManagementModel') executeManagementModel: IExecutionManagementModel,
         @inject('IChannelDB') channelDB: IChannelDB,
         @inject('IProgramDB') programDB: IProgramDB,
         @inject('IVideoFileDB') videoFileDB: IVideoFileDB,
@@ -35,6 +39,7 @@ export default class RecordingUtilModel implements IRecordingUtilModel {
     ) {
         this.log = logger.getLogger();
         this.config = configuration.getConfig();
+        this.executeManagementModel = executeManagementModel;
         this.channelDB = channelDB;
         this.programDB = programDB;
         this.videoFileDB = videoFileDB;
@@ -43,11 +48,32 @@ export default class RecordingUtilModel implements IRecordingUtilModel {
 
     /**
      * 保存先ディレクトリを取得する
+     * _getRecPath 関数をラップして排他制御する
+     *
      * @param reserve: Reserve
      * @param isEnableTmp: 一時保存ディレクトリを使用するか
      * @return Promise<RecFilePathInfo> 保存先ファイルパス
      */
     public async getRecPath(reserve: Reserve, isEnableTmp: boolean): Promise<RecFilePathInfo> {
+        // ロック取得
+        const exeId = await this.executeManagementModel.getExecution(
+            RecordingUtilModel.GET_REC_PATH_PRIORITY,
+            RecordingUtilModel.GET_REC_PATH_LOCK_TIMEOUT,
+        );
+
+        return await this._getRecPath(reserve, isEnableTmp).finally(() => {
+            // 必ずロックを開放するようにする
+            this.executeManagementModel.unLockExecution(exeId);
+        });
+    }
+
+    /**
+     * 保存先ディレクトリを取得する
+     * @param reserve: Reserve
+     * @param isEnableTmp: 一時保存ディレクトリを使用するか
+     * @return Promise<RecFilePathInfo> 保存先ファイルパス
+     */
+    private async _getRecPath(reserve: Reserve, isEnableTmp: boolean): Promise<RecFilePathInfo> {
         // 親ディレクトリ
         let parentDir: RecordedDirInfo | null = null;
         let subDir = ''; // サブディレクトリ
@@ -81,53 +107,17 @@ export default class RecordingUtilModel implements IRecordingUtilModel {
             subDir = reserve.directory === null ? '' : reserve.directory;
         }
 
-        // 局名
-        let channelName = reserve.channelId.toString(10); // 局名が取れなかったときのために id で一旦セットする
-        let halfWidthChannelName = channelName;
-        let sid = 'NULL';
-        try {
-            const channel = await this.channelDB.findId(reserve.channelId);
-            if (channel !== null) {
-                channelName = channel.name;
-                halfWidthChannelName = channel.halfWidthName;
-                sid = channel.serviceId.toString(10);
-            }
-        } catch (err: any) {
-            this.log.system.warn(`channel name get error: ${reserve.channelId}`);
-        }
-
-        // 時刻指定予約時の番組名取得
-        let programName = reserve.name;
-        if (reserve.isTimeSpecified === true) {
-            // 時刻指定予約なので番組情報を取得する
-            const program = await this.programDB.findChannelIdAndTime(reserve.channelId, reserve.startAt);
-            programName = program === null ? '番組名なし' : program.name;
-        }
-
         // ファイル名
         let fileName = reserve.recordedFormat === null ? this.config.recordedFormat : reserve.recordedFormat;
-        const jaDate = DateUtil.getJaDate(new Date(reserve.startAt));
-        fileName = fileName
-            .replace(/%YEAR%/g, DateUtil.format(jaDate, 'yyyy'))
-            .replace(/%SHORTYEAR%/g, DateUtil.format(jaDate, 'YY'))
-            .replace(/%MONTH%/g, DateUtil.format(jaDate, 'MM'))
-            .replace(/%DAY%/g, DateUtil.format(jaDate, 'dd'))
-            .replace(/%HOUR%/g, DateUtil.format(jaDate, 'hh'))
-            .replace(/%MIN%/g, DateUtil.format(jaDate, 'mm'))
-            .replace(/%SEC%/g, DateUtil.format(jaDate, 'ss'))
-            .replace(/%DOW%/g, DateUtil.format(jaDate, 'w'))
-            .replace(/%TYPE%/g, reserve.channelType)
-            .replace(/%CHID%/g, reserve.channelId.toString(10))
-            .replace(/%CHNAME%/g, channelName)
-            .replace(/%HALF_WIDTH_CHNAME%/g, halfWidthChannelName)
-            .replace(/%CH%/g, reserve.channel)
-            .replace(/%SID%/g, sid)
-            .replace(/%ID%/g, reserve.id.toString())
-            .replace(/%TITLE%/g, programName === null ? 'NULL' : programName)
-            .replace(/%HALF_WIDTH_TITLE%/g, reserve.halfWidthName === null ? 'NULL' : reserve.halfWidthName);
+        fileName = await this.formatFilePathString(fileName, reserve);
 
         // 使用禁止文字列置き換え
         fileName = StrUtil.replaceFileName(fileName);
+
+        // サブディレクトリ
+        if (subDir.length > 0) {
+            subDir = await this.formatFilePathString(subDir, reserve);
+        }
 
         // ディレクトリ
         const dir = path.join(parentDir.path, subDir);
@@ -298,4 +288,70 @@ export default class RecordingUtilModel implements IRecordingUtilModel {
             this.log.system.error(err);
         }
     }
+
+    public async formatFilePathString(format: string, src: Recorded | Reserve): Promise<string> {
+        let id: string;
+        let programName: string = src.name;
+        let channelType: string = 'NULL';
+        let channel: string = 'NULL';
+        if (src instanceof Reserve) {
+            // Reserve
+            id = src.id.toString(10);
+            channelType = src.channelType;
+            channel = src.channel;
+            // 時刻指定予約時の番組名取得
+            if (src.isTimeSpecified === true) {
+                // 時刻指定予約なので番組情報を取得する
+                const program = await this.programDB.findChannelIdAndTime(src.channelId, src.startAt);
+                programName = program === null ? '番組名なし' : program.name;
+            }
+        } else {
+            // Recorded
+            id = src.reserveId?.toString(10) || 'NULL';
+        }
+
+        // 局名
+        let channelName = src.channelId.toString(10); // 局名が取れなかったときのために id で一旦セットする
+        let halfWidthChannelName = channelName;
+        let sid = 'NULL';
+        try {
+            const ch = await this.channelDB.findId(src.channelId);
+            if (ch !== null) {
+                channelName = ch.name;
+                halfWidthChannelName = ch.halfWidthName;
+                sid = ch.serviceId.toString(10);
+                channelType = ch.channelType;
+                channel = ch.channel;
+            }
+        } catch (err: any) {
+            this.log.system.warn(`channel name get error: ${src.channelId}`);
+        }
+        const jaDate = DateUtil.getJaDate(new Date(src.startAt));
+
+        return format
+            .replace(/%YEAR%/g, DateUtil.format(jaDate, 'yyyy'))
+            .replace(/%SHORTYEAR%/g, DateUtil.format(jaDate, 'YY'))
+            .replace(/%MONTH%/g, DateUtil.format(jaDate, 'MM'))
+            .replace(/%DAY%/g, DateUtil.format(jaDate, 'dd'))
+            .replace(/%HOUR%/g, DateUtil.format(jaDate, 'hh'))
+            .replace(/%MIN%/g, DateUtil.format(jaDate, 'mm'))
+            .replace(/%SEC%/g, DateUtil.format(jaDate, 'ss'))
+            .replace(/%DOW%/g, DateUtil.format(jaDate, 'w'))
+            .replace(/%TYPE%/g, channelType)
+            .replace(/%CHID%/g, src.channelId?.toString(10) || 'NULL')
+            .replace(/%CHNAME%/g, channelName)
+            .replace(/%HALF_WIDTH_CHNAME%/g, halfWidthChannelName)
+            .replace(/%CH%/g, channel)
+            .replace(/%SID%/g, sid)
+            .replace(/%ID%/g, id.toString())
+            .replace(/%TITLE%/g, programName === null ? 'NULL' : programName)
+            .replace(/%HALF_WIDTH_TITLE%/g, src.halfWidthName === null ? 'NULL' : src.halfWidthName);
+    }
 }
+
+namespace RecordingUtilModel {
+    export const GET_REC_PATH_LOCK_TIMEOUT = 5.0 * 1000;
+    export const GET_REC_PATH_PRIORITY = 1;
+}
+
+export default RecordingUtilModel;

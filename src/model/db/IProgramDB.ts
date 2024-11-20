@@ -47,10 +47,19 @@ export interface FindScheduleOption extends FindScheduleBaseOption {
 }
 
 export default interface IProgramDB {
-    insert(channelTypes: IChannelTypeIndex, programs: mapid.Program[]): Promise<void>;
+    insert(
+        channelTypes: IChannelTypeIndex,
+        programs: mapid.Program[],
+        deleteChannelIds?: mapid.ServiceId[],
+    ): Promise<void>;
     update(channelTypes: IChannelTypeIndex, values: ProgramUpdateValues): Promise<void>;
     deleteOld(time: apid.UnixtimeMS): Promise<void>;
     findId(programId: apid.ProgramId): Promise<Program | null>;
+    findEventRelayProgram(
+        networkId: apid.NetworkId,
+        serviceId: apid.ServiceId,
+        eventId: apid.EventId,
+    ): Promise<Program | null>;
     findRule(option: FindRuleOption): Promise<ProgramWithOverlap[]>;
     findChannelIdAndTime(channelId: apid.ChannelId, startAt: apid.UnixtimeMS): Promise<Program | null>;
     findAll(): Promise<Program[]>;

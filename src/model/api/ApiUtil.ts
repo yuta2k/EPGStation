@@ -2,7 +2,7 @@ import axios, { AxiosRequestConfig } from 'axios';
 import { inject, injectable } from 'inversify';
 import * as path from 'path';
 import * as url from 'url';
-import urljoin = require('url-join');
+import urljoin from 'url-join';
 import { KodiInfo } from '../IConfigFile';
 import IConfiguration from '../IConfiguration';
 import IApiUtil, { CreateM3U8Option } from './IApiUtil';
@@ -40,7 +40,7 @@ export default class ApiUtil implements IApiUtil {
     /**
      * kodi へビデオリンクを送信する
      * @param source: ビデオリンク
-     * @param hkodiInfo: KodiInfo
+     * @param kodiInfo: KodiInfo
      */
     public async sendToKodi(source: string, kodiInfo: KodiInfo): Promise<void> {
         const option: AxiosRequestConfig = {

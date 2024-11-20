@@ -1,5 +1,5 @@
 import { inject, injectable } from 'inversify';
-import { FindConditions, FindManyOptions, In, IsNull, LessThan, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
+import { FindOptionsWhere, FindManyOptions, In, IsNull, LessThan, LessThanOrEqual, MoreThanOrEqual } from 'typeorm';
 import * as apid from '../../../api';
 import Reserve from '../../db/entities/Reserve';
 import { IReserveUpdateValues } from '../event/IReserveEvent';
@@ -178,7 +178,7 @@ export default class ReserveDB implements IReserveDB {
     }
 
     private createFindOption(option: apid.GetReserveOption): FindManyOptions<Reserve> {
-        const findConditions: FindConditions<Reserve> = {};
+        const findConditions: FindOptionsWhere<Reserve> = {};
         this.setReserveTypeOption(option.type, findConditions);
 
         if (typeof option.ruleId !== 'undefined') {
@@ -204,7 +204,10 @@ export default class ReserveDB implements IReserveDB {
         return findOption;
     }
 
-    private setReserveTypeOption(type: apid.GetReserveType | undefined, findConditions: FindConditions<Reserve>): void {
+    private setReserveTypeOption(
+        type: apid.GetReserveType | undefined,
+        findConditions: FindOptionsWhere<Reserve>,
+    ): void {
         if (type === 'normal') {
             findConditions.isConflict = false;
             findConditions.isSkip = false;
@@ -241,7 +244,7 @@ export default class ReserveDB implements IReserveDB {
     }
 
     private createFindListOption(option: apid.GetReserveListsOption): FindManyOptions<Reserve> {
-        const findConditions: FindConditions<Reserve> = {
+        const findConditions: FindOptionsWhere<Reserve> = {
             startAt: LessThanOrEqual((<apid.GetReserveListsOption>option).endAt),
             endAt: MoreThanOrEqual((<apid.GetReserveListsOption>option).startAt),
         };
@@ -293,17 +296,20 @@ export default class ReserveDB implements IReserveDB {
         option.times = newTimes;
 
         // option.times の連続した時間を一つにまとめる
-        option.times = option.times.reduce((acc, cur, index) => {
-            if (index === 0) {
+        option.times = option.times.reduce(
+            (acc, cur, index) => {
+                if (index === 0) {
+                    return acc;
+                }
+                if (acc[acc.length - 1].endAt === cur.startAt) {
+                    acc[acc.length - 1].endAt = cur.endAt;
+                } else {
+                    acc.push(cur);
+                }
                 return acc;
-            }
-            if (acc[acc.length - 1].endAt === cur.startAt) {
-                acc[acc.length - 1].endAt = cur.endAt;
-            } else {
-                acc.push(cur);
-            }
-            return acc;
-        }, option.times.slice(0, 1));
+            },
+            option.times.slice(0, 1),
+        );
 
         // times
         let timesQuery = '';
@@ -368,15 +374,18 @@ export default class ReserveDB implements IReserveDB {
     public async findRuleId(option: IFindRuleOption): Promise<Reserve[]> {
         const connection = await this.op.getConnection();
 
-        const whereOption: FindConditions<Reserve>[] = [{ ruleId: option.ruleId }];
+        const whereOption: FindOptionsWhere<Reserve> = { ruleId: option.ruleId };
         if (option.hasSkip === false) {
-            whereOption.push({ isSkip: false });
+            whereOption.isSkip = false;
         }
         if (option.hasConflict === false) {
-            whereOption.push({ isConflict: false });
+            whereOption.isConflict = false;
         }
         if (option.hasOverlap === false) {
-            whereOption.push({ isOverlap: false });
+            whereOption.isOverlap = false;
+        }
+        if (option.hasEventRelay === false) {
+            whereOption.isEventRelay = false;
         }
 
         const queryBuilder = connection.getRepository(Reserve);
@@ -402,7 +411,9 @@ export default class ReserveDB implements IReserveDB {
 
         return await this.promieRetry.run(() => {
             return queryBuilder.find({
-                endAt: LessThan(baseTime),
+                where: {
+                    endAt: LessThan(baseTime),
+                },
             });
         });
     }
@@ -441,13 +452,37 @@ export default class ReserveDB implements IReserveDB {
             .createQueryBuilder()
             .select('reserve.id')
             .from(Reserve, 'reserve')
-            .where('reserve.ruleId is null');
+            .where('reserve.ruleId is :ruleId', { ruleId: null });
 
         if (option.hasTimeReserve === false) {
             queryBuilder = queryBuilder.andWhere('reserve.programId is not null');
         }
 
         queryBuilder = queryBuilder.orderBy('reserve.id', 'ASC');
+        const result = await this.promieRetry.run(() => {
+            return queryBuilder.getMany();
+        });
+
+        return result.map(r => {
+            return r.id;
+        });
+    }
+
+    /**
+     * ルール予約によってイベントリレーで予約された reserve id を取得する
+     * @returns Promise<apid.ReserveId[]>
+     */
+    public async getRuleEventRelayIds(): Promise<apid.ReserveId[]> {
+        const connection = await this.op.getConnection();
+
+        const queryBuilder = connection
+            .createQueryBuilder()
+            .select('reserve.id')
+            .from(Reserve, 'reserve')
+            .andWhere('reserve.ruleId is not null')
+            .andWhere('reserve.isEventRelay is :isEventRelay', { isEventRelay: this.op.convertBoolean(true) })
+            .orderBy('reserve.id', 'ASC');
+
         const result = await this.promieRetry.run(() => {
             return queryBuilder.getMany();
         });
@@ -466,7 +501,7 @@ export default class ReserveDB implements IReserveDB {
     public async countRuleIds(ruleIds: apid.RuleId[], type: apid.GetReserveType): Promise<RuleIdCountResult[]> {
         const connection = await this.op.getConnection();
 
-        const whereOption: FindConditions<Reserve> = {
+        const whereOption: FindOptionsWhere<Reserve> = {
             ruleId: In(ruleIds),
         };
         this.setReserveTypeOption(type, whereOption);
